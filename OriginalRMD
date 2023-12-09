@@ -1,0 +1,278 @@
+---
+title: "BinAIDCode"
+author: "TesTLin"
+date: "2023-07-30"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r load env}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(lattice)
+library(readxl)
+library(cowplot)
+library(patchwork)
+library(caTools)
+library(caret)
+library(PairedData)
+library(lme4)
+library(sjPlot)
+library(gtsummary)
+library(ggeffects)
+```
+
+
+```{r WD and opening file}
+#set working directory and open file
+setwd("C:/Users/Tesia/Documents/school/UWyo/BighornSheepWork/SerumWork")
+IDSheepdat<- read.csv("AIDSheepDat1.csv", stringsAsFactors = TRUE)
+View(IDSheepdat)
+```
+
+```{r select winter data}
+#remove NA from dataset
+SheepDatCl <- subset(IDSheepdat, IDSheepdat$Bin !="NA")
+#select for winter seasons only
+WinterDat <- subset(SheepDatCl, Season == "Winter")
+WinterDat <- WinterDat %>% mutate(Twhole = scale(Twhole))
+```
+
+```{r Winter Recruitment Virus Plots}
+# Create the datlist with subsets of data
+  datlist <- list(
+    subset(WinterDat, Virus == "PI-3"),
+    subset(WinterDat, Virus == "BRSV"),
+    subset(WinterDat, Virus == "BVDI"),
+    subset(WinterDat, Virus == "BVDII")
+  )
+  
+  # Create the PlotFunc function with data and virus_level as arguments
+  PlotFunc <- function(data, virus_level) {
+    # Fit the glmer model for the current dataset
+    ModDec <- lme4::glmer(Bin ~ Twhole + (1|AnimalID),
+                          data = data,
+                          family = binomial)
+    
+    # Generate predictions for the current model
+    plot_data <- ggeffects::ggpredict(ModDec, terms = c("Twhole[all]"))
+    
+    # Create the plot for the current model with virus_level in the title
+    p <- plot_data %>% 
+      plot() + 
+      ggplot2::labs(
+        x = "Titer",
+        y = "Recruitment",
+      title = paste("Probability of lamb recruitment vs.
+      Winter" , virus_level ,"Exposure")
+      )
+    
+    # Return the plot for the current dataset
+    return(p)
+  }
+  
+  # Apply the PlotFunc function to each dataset in datlist
+  plot_list <- mapply(PlotFunc, data = datlist, 
+                      virus_level = unique(WinterDat$Virus), SIMPLIFY = FALSE)
+  
+  # Combine all the individual plots into one grid layout
+  combined_plot <- cowplot::plot_grid(plotlist = plot_list, ncol = 2)
+  
+  # Print or display the combined plot
+  print(combined_plot)
+```
+```{r experiment}
+    Mod1 <- lme4::glmer(Bin ~ Twhole + (1|AnimalID),
+                          data = subset(WinterDat,  Virus == "PI-3"),
+                          family = binomial)
+  tidy(Mod1)
+  summary(Mod1)
+```
+
+```{r Winter Regression Summary Tables}
+
+library(lme4)
+library(broom.mixed)
+library(sjPlot)
+library(knitr)
+library(kableExtra)
+
+# Create a list to store the model summaries for each virus using subsets
+#from previously generated list
+model_summaries <- lapply(datlist, function(data) {
+  modWin <- glmer(Bin ~ Twhole + (1|AnimalID),
+               data = data,
+               family = binomial)
+  tidy(modWin)
+})
+
+# Combine all the model summaries into one table summarizing the results for all viruses
+combined_summary <- bind_rows(model_summaries, .id = "Virus Level")
+# Print the combined summary table as an HTML table
+combined_summary %>%
+  kable(format = "html") %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+```{r Spring Data Selection}
+require(dplyr)
+capevents <- as.data.frame(1:14)
+capevents$CaptureEvent <- c("Spring2015", "Winter2015", "Spring2016", "Winter2016", 
+                            "Spring2017", "Winter2017", "Spring2018", "Winter2018", 
+                            "Spring2019", "Winter2019", "Spring2020", "Winter2020", 
+                            "Spring2021", "Winter2021")
+MergIDSheepdat <- merge(IDSheepdat, capevents, by = "CaptureEvent")
+#rename column
+MergIDSheepdat$capnum <- MergIDSheepdat$`1:14`
+#delete old column
+MergIDSheepdat$`1:14` <- NULL
+
+MergIDSheepdat <- MergIDSheepdat[order(MergIDSheepdat$AnimalID, 
+                                       MergIDSheepdat$capnum),]
+BinMar <- MergIDSheepdat %>%
+  #grouping all the records for each animal together - 
+  #important that the data is ordered by capture number
+  group_by(AnimalID)%>%
+  #add a new column with the previous captures info
+  mutate(prevpreg = as.numeric(
+    if_else(capnum - lag(capnum) == 1, as.character(lag(Preg)), "NA")))%>%
+  ungroup(AnimalID)
+BinMarSel <- subset(BinMar, prevpreg == "1")
+BinMarSel <- subset(BinMarSel, Virus == c("PI-3", "BVDII"))
+#BinMarSel <- BinMarSel %>% mutate(Twhole = scale(Twhole))
+
+```
+
+```{r Spring Titer Affecting Recruitment Plot}
+# Create the datlist with subsets of data
+SpDatList <- list(
+  subset(BinMarSel, Virus == "PI-3"),
+  subset(BinMarSel, Virus == "BVDII")
+)
+
+# Create the PlotFunc function with data and virus_level as arguments
+PlotFunc <- function(data, virus_level) {
+  # Fit the glmer model for the current dataset
+  ModMar <- lme4::glmer(Bin ~ Twhole + (1|AnimalID),
+                        data = data,
+                        family = binomial)
+  
+  # Generate predictions for the current model
+  plot_data <- ggeffects::ggpredict(ModMar, terms = c("Twhole[all]"))
+  
+  # Create the plot for the current model with virus_level in the title
+  p <- plot_data %>% 
+    plot() + 
+    ggplot2::labs(
+      x = "Titer",
+      y = "Recruitment",
+      title = paste("Probability of lamb recruitment vs.
+      Spring" , virus_level ,"Exposure")
+    )
+  
+  # Return the plot for the current dataset
+  return(p)
+}
+
+# Apply the PlotFunc function to each dataset in datlist
+plot_list <- mapply(PlotFunc, data = SpDatList, 
+                    virus_level = unique(BinMarSel$Virus), SIMPLIFY = FALSE)
+
+# Combine all the individual plots into one grid layout
+combined_plot <- cowplot::plot_grid(plotlist = plot_list, ncol = 2)
+
+# Print or display the combined plot
+print(combined_plot)
+```
+
+```{r Spring Statistics Summary Tables}
+# Create the Tbl function with data and virus_level as arguments
+# Assuming you have already defined datlist and PlotFunc as shown in the previous responses
+
+  # Fit the glmer model for the current dataset
+# Load necessary packages
+  library(lme4)
+  library(broom.mixed)
+  library(sjPlot)
+  library(knitr)
+  library(kableExtra)
+  
+  # Split example dataset by the Virus group factor
+sublist <- list(
+  subset(BinMarSel, Virus == "PI-3"),
+  subset(BinMarSel, Virus == "BRSV"),
+  subset(BinMarSel, Virus == "BVDI"),
+  subset(BinMarSel, Virus == "BVDII")
+)
+  
+  # Create a list to store the model summaries for each virus
+  model_summaries <- lapply(sublist, function(data) {
+    mod <- glmer(Bin ~ Twhole + (1|AnimalID),
+                 data = data,
+                 family = binomial)
+    tidy(mod)
+  })
+  
+  # Combine all the model summaries into one table summarizing the results for all viruses
+  combined_summary <- bind_rows(model_summaries, .id = "Virus Level")
+  # Print the combined summary table as an HTML table
+  combined_summary %>%
+    kable(format = "html") %>%
+    kable_styling(full_width = FALSE)
+```
+
+```{r T tests on Individuals}
+require(dplyr)
+library(broom)
+#selectdata
+seldat <- IDSheepdat %>%
+  select(AnimalID, Season, Twhole, Virus, Year) %>%
+  group_by(AnimalID, Virus) %>%
+  filter(Season == "Winter" & lead(Season) == "Spring" & Year + 1 == lead(Year))
+
+# Mutate a new column with the difference between Spring titers and Winter titers
+selected_data <- seldat %>%
+  mutate(Titer_Difference = lead(Twhole) - Twhole) %>%
+  group_by(AnimalID, Virus, Year) %>%
+  summarise(Titer_Difference = sum(Titer_Difference))
+
+# Perform the t-test on the differences
+# Perform one-tailed paired t-test and create a summary table
+testresult <- t.test(selected_data$Titer_Difference, 
+                        alternative = "greater", mu = 0)
+# Convert t-test result to a tidy dataframe
+tidtable <- tidy(t_test_result)
+
+# Convert to HTML table using kable and kableExtra
+tidtable <- tidtable %>%
+  kable(format = "html", align = "c") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+print(tidtable)
+
+```
+
+
+
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
